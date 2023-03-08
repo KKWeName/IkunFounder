@@ -1,0 +1,157 @@
+/**
+ * subdomainFinder是一个用于查找子域名的Java类
+ * 在指定域名下，通过读取文本文件中的子域名列表，获取每个子域名的IP地址
+ * 使用线程池和同步辅助类CountDownLatch实现高效并发操作
+ * 代码中使用了ConcurrentHashMap来实现读写操作，CountDownLatch进行线程池控制
+ *
+ * 使用ConcurrentHashMap可以在高并发模式下实现读/写操作,ConcurrentSkipListMap则是可以有序输出
+ * 使用同步辅助类CountDownLatch进行控制线程池在运行结束后再去进行其他操作,通过CountDownLatch latch = new CountDownLatch("与进程池相同容量");
+ * latch.countDown()使用在线程完成任务后,作用是让计数器减一
+ * latch.await()使用在提交线程之前:
+ *  public subdomainFinder(String servername, String filename) throws InterruptedException {
+ *         this.serverName = servername;
+ *         this.fileName = filename;
+ *         GetDnsTest();
+ *         Dnslatch.await();
+ *         Cutlatch.await();
+ *         executor.shutdown();
+ *         getAll();
+ *     }
+ **/
+
+package org.example;
+
+import java.io.*;
+import java.net.InetAddress;
+import java.util.*;
+import java.util.concurrent.*;
+
+public class Main {
+    private String serverName;
+    // 存储主域名的字符串
+    private List SubName = new ArrayList();
+    // 存储子域名的List
+    private String fileName;
+    // 存储子域名文件路径的字符串
+    private final int threadPoolSize = 10;
+    // 线程池大小
+    private ExecutorService executor = Executors.newFixedThreadPool(threadPoolSize);
+    // 线程池
+    private CountDownLatch Dnslatch = new CountDownLatch(threadPoolSize);
+    // CountDownLatch控制DNS线程池运行结束
+    private CountDownLatch Cutlatch = new CountDownLatch(threadPoolSize);
+    // CountDownLatch控制读取文件线程池运行结束
+    private final LinkedBlockingQueue<Object> queue = new LinkedBlockingQueue<Object>(40);
+    // 存储子域名+主域名字符串的队列
+    private final LinkedBlockingQueue<Object> queue2 = new LinkedBlockingQueue<Object>(40);
+    // 存储每个子域名及其对应的IP地址列表的ConcurrentHashMap
+    private InetAddress[] inetAddress = null;
+    // 存储IP地址的InetAddress数组
+    private ConcurrentHashMap<String, List<String>> urlMap = new ConcurrentHashMap<>();
+    // 存储每个子域名及其对应的IP地址列表的ConcurrentHashMap
+
+
+    /**
+     * 构造函数，传入主域名和子域名文件路径
+     * @param servername 主域名
+     * @param filename 子域名文件路径
+     * @throws InterruptedException 抛出线程中断异常
+     */
+    public Main(String servername, String filename) throws Exception {
+        this.serverName = servername;
+        this.fileName = filename;
+        GetDnsTest();
+        Dnslatch.await();
+        Cutlatch.await();
+        getAll();
+    }
+
+    /**
+     * 获取子域名列表并向队列中添加子域名+主域名字符串
+     * 使用CountDownLatch控制线程池运行结束
+     */
+    @SuppressWarnings("unchecked")
+    protected void GetDnsTest() {
+        // 读取子域名文件并向队列中添加子域名+主域名字符串的任务
+        Runnable taskCut = () -> {
+            while (true) {
+                try (BufferedReader brs = new BufferedReader(new InputStreamReader(new FileInputStream(fileName), "GBK"))) {
+                    String count;
+                    int FileCount = 0;
+                    while ((count = brs.readLine()) != null) {
+                        SubName.add(count + ".");
+                        FileCount++;
+                    }
+                    for (int i = 0; i < FileCount; i++) {
+                        queue.put(SubName.get(i) + serverName);
+                        Cutlatch.countDown();
+                    }
+                } catch (Exception e) {}
+            }
+        };
+
+        Runnable taskDns = () -> {
+            while (true) {
+                try {
+                    Object take = queue.take();
+                    InetAddress[] inetAddresses = InetAddress.getAllByName(take.toString());
+                    List<String> ips = new ArrayList<>();
+                    for (InetAddress inetAddress : inetAddresses) {
+                        ips.add(inetAddress.getHostAddress());
+                    }
+                    urlMap.put(take.toString(), ips);
+                    queue2.put(urlMap);
+                    Dnslatch.countDown();
+                } catch (Exception e) {
+                }
+            }
+        };
+        executor.submit(taskCut);
+        executor.submit(taskDns);
+        executor.shutdown();
+    }
+    @SuppressWarnings("unchecked")
+    public void getAll() throws Exception {
+        System.out.println("URL\t\t\tIP");
+        ConcurrentHashMap<String, List<String>> take = (ConcurrentHashMap<String, List<String>>) queue2.poll();
+        Iterator<Map.Entry<String, List<String>>> iter = take.entrySet().iterator();
+        while (queue2.poll() != null && iter.hasNext()) {
+            Map.Entry<String, List<String>> entry = iter.next();
+            String url = entry.getKey();
+            List<String> ips = entry.getValue();
+            Thread.currentThread().sleep(800);
+            if (url.length() <= 15){
+                System.out.println("\u001B[31m"+url+"\u001B[0m" + "\t\t" + "\u001B[36m"+String.join(", ", ips));
+            } else {
+                System.out.println("\u001B[31m"+url+"\u001B[0m" + "\t" + "\u001B[36m"+String.join(", ", ips));
+        }
+    }
+}
+    public static void LogoPrinter(){
+        System.out.println("\n" +
+                "         .-. .-')                   .-') _                             \n" +
+                "         \\  ( OO )                 ( OO ) )                            \n" +
+                "  ,-.-') ,--. ,--. ,--. ,--.   ,--./ ,--,'   ,--.     ,--.     ,--.    \n" +
+                "  |  |OO)|  .'   / |  | |  |   |   \\ |  |\\  /  .'    /  .'    /  .'    \n" +
+                "  |  |  \\|      /, |  | | .-') |    \\|  | ).  / -.  .  / -.  .  / -.   \n" +
+                "  |  |(_/|     ' _)|  |_|( OO )|  .     |/ | .-.  ' | .-.  ' | .-.  '  \n" +
+                " ,|  |_.'|  .   \\  |  | | `-' /|  |\\    |  ' \\  |  |' \\  |  |' \\  |  | \n" +
+                "(_|  |   |  |\\   \\('  '-'(_.-' |  | \\   |  \\  `'  / \\  `'  / \\  `'  /  \n" +
+                "  `--'   `--' '--'  `-----'    `--'  `--'   `----'   `----'   `----'   \n");
+        System.out.println("Usege:IkunFound -u [Url] -d [dict.txt]");
+    }
+    public static void main(String[] args) throws Exception {
+        LogoPrinter();
+        String uri = null;
+        String filename = null;
+            for (int i = 0; i < args.length; i++) {
+                if (args[i].equals("-u")) {
+                    uri = args[++i];
+                } else if (args[i].equals("-d")) {
+                    filename = args[++i];
+                }
+            }
+        Main finder = new Main(uri,filename);
+        System.out.println("输出结束,请Ctrl+C退出");
+    }
+}
